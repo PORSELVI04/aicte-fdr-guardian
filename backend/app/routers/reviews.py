@@ -12,6 +12,7 @@ from app.models.document import FDRDocument
 from app.models.fdr import FDR
 from app.models.user import User
 from app.models.verification import VerificationReview
+from app.services.document_integrity import check_document_integrity
 from app.services.verification_service import run_ocr_verification
 from app.services.maker_checker import enforce_maker_checker
 
@@ -69,6 +70,8 @@ def create_review(
             status_code=404,
             detail="Document does not belong to this FDR.",
         )
+
+    check_document_integrity(db=db, document=document, current_user=current_user)
 
     # Calculate the verification result on the server.
     if document.content_type in {"image/jpeg", "image/png"}:

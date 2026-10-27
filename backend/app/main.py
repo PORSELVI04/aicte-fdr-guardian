@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import Base, engine
+from app.migrations import ensure_columns
 
 from app.models.institution import Institution
 from app.models.fdr import FDR
@@ -32,6 +33,7 @@ async def lifespan(app: FastAPI):
 
     # Create database tables
     Base.metadata.create_all(bind=engine)
+    ensure_columns()
 
     yield
 

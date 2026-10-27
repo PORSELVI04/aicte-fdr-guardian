@@ -15,6 +15,7 @@ from app.dependencies import require_roles
 from app.models.document import FDRDocument
 from app.models.fdr import FDR
 from app.models.user import User
+from app.services.document_integrity import check_document_integrity
 from app.services.document_service import (
     UPLOAD_DIR,
     save_document,
@@ -54,6 +55,7 @@ async def upload_fdr_document(
         original_filename=saved["original_filename"],
         stored_filename=saved["stored_filename"],
         content_type=saved["content_type"],
+        sha256=saved["sha256"],
     )
 
     try:
@@ -142,13 +144,13 @@ def download_fdr_document(
             detail="Document not found for this FDR.",
         )
 
-    file_path = UPLOAD_DIR / document.stored_filename
+    integrity_status = check_document_integrity(
+        db=db,
+        document=document,
+        current_user=current_user,
+    )
 
-    if not file_path.is_file():
-        raise HTTPException(
-            status_code=404,
-            detail="Stored document file not found.",
-        )
+    file_path = UPLOAD_DIR / document.stored_filename
 
     return FileResponse(
         path=file_path,
@@ -157,5 +159,6 @@ def download_fdr_document(
         content_disposition_type="attachment",
         headers={
             "X-Content-Type-Options": "nosniff",
+            "X-Integrity-Status": integrity_status,
         },
     )

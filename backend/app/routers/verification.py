@@ -6,6 +6,7 @@ from app.dependencies import require_roles
 from app.models.document import FDRDocument
 from app.models.fdr import FDR
 from app.models.user import User
+from app.services.document_integrity import check_document_integrity
 from app.services.verification_service import run_ocr_verification
 
 
@@ -46,5 +47,11 @@ def verify_fdr_document(
             status_code=404,
             detail="Document not found for this FDR.",
         )
+
+    check_document_integrity(
+        db=db,
+        document=document,
+        current_user=current_user,
+    )
 
     return run_ocr_verification(fdr, document)
