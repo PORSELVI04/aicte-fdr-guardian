@@ -11,12 +11,14 @@ from app.models.audit_log import AuditLog
 from app.models.fdr import FDR
 from app.models.fdr_action import FDRAction
 from app.models.user import User
+from app.services.maker_checker import enforce_maker_checker
 
 
 router = APIRouter(
     prefix="/api/fdr-actions",
     tags=["FDR Actions"],
 )
+
 
 class FDRActionCreate(BaseModel):
     fdr_id: int
@@ -29,7 +31,7 @@ class FDRActionDecision(BaseModel):
     remarks: str | None = Field(default=None, max_length=1000)
 
 
-# Outcomes applied to the FDR when an action is approved.
+# Outcomes applied to an FDR when an action is approved.
 # (administrative_status, validity_status or None to leave unchanged)
 APPROVED_OUTCOMES = {
     "RENEWAL": ("RENEWAL_APPROVED", None),
@@ -40,13 +42,16 @@ APPROVED_OUTCOMES = {
 
 def apply_approved_action(fdr: FDR, action_type: str) -> str:
     """Update the FDR after approval and describe the change."""
+
     if action_type not in APPROVED_OUTCOMES:
         raise HTTPException(
             status_code=400,
             detail="Unsupported FDR action type.",
         )
 
-    new_admin_status, new_validity_status = APPROVED_OUTCOMES[action_type]
+    new_admin_status, new_validity_status = APPROVED_OUTCOMES[
+        action_type
+    ]
 
     old_admin_status = fdr.administrative_status
     old_validity_status = fdr.validity_status
@@ -64,8 +69,9 @@ def apply_approved_action(fdr: FDR, action_type: str) -> str:
     )
 
 
-# Convert an FDR action object into a JSON-compatible dictionary.
-def action_to_dict(action: FDRAction):
+def action_to_dict(action: FDRAction) -> dict:
+    """Convert an FDR action into a JSON-compatible dictionary."""
+
     return {
         "id": action.id,
         "fdr_id": action.fdr_id,
@@ -189,6 +195,17 @@ def decide_fdr_action(
             detail="This request has already been decided.",
         )
 
+    # FIX 6: Prevent the request creator from approving or rejecting
+    # their own request. Blocked attempts are audit-logged.
+    enforce_maker_checker(
+        db=db,
+        maker_username=action.performed_by,
+        current_user=current_user,
+        entity_type="FDR_ACTION",
+        entity_id=action.id,
+        label="request",
+    )
+
     fdr = db.get(FDR, action.fdr_id)
 
     if fdr is None:
@@ -197,6 +214,7 @@ def decide_fdr_action(
             detail="FDR record not found.",
         )
 
+    # Do not approve an action if the FDR has already been released.
     if (
         data.action_status == "APPROVED"
         and fdr.validity_status == "RELEASED"
@@ -226,7 +244,7 @@ def decide_fdr_action(
     if data.remarks is not None:
         action.remarks = data.remarks
 
-    # Record the action decision and resulting FDR status changes.
+    # Record the decision and resulting FDR status changes.
     audit_entry = AuditLog(
         action=f"FDR_ACTION_{data.action_status}",
         entity_type="FDR_ACTION",

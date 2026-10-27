@@ -13,16 +13,19 @@ from app.models.fdr import FDR
 from app.models.user import User
 from app.models.verification import VerificationReview
 from app.services.verification_service import run_ocr_verification
+from app.services.maker_checker import enforce_maker_checker
+
 
 router = APIRouter(
     prefix="/api/reviews",
-    tags=["Verification Reviews"]
+    tags=["Verification Reviews"],
 )
 
 
 class ReviewCreate(BaseModel):
     fdr_id: int = Field(gt=0)
     document_id: int = Field(gt=0)
+
 
 class ReviewDecision(BaseModel):
     decision: str = Field(
@@ -31,7 +34,7 @@ class ReviewDecision(BaseModel):
 
     comments: str | None = Field(
         default=None,
-        max_length=2000
+        max_length=2000,
     )
 
 
@@ -47,7 +50,10 @@ def create_review(
     fdr = db.get(FDR, data.fdr_id)
 
     if fdr is None:
-        raise HTTPException(status_code=404, detail="FDR not found.")
+        raise HTTPException(
+            status_code=404,
+            detail="FDR not found.",
+        )
 
     document = (
         db.query(FDRDocument)
@@ -86,6 +92,8 @@ def create_review(
     db.add(review)
     db.flush()
 
+    # Record who created the review. Fix 6 uses this entry to identify
+    # the maker when another user attempts to decide the review.
     db.add(
         AuditLog(
             action="REVIEW_CREATED",
@@ -131,7 +139,7 @@ def list_reviews(
         if status not in allowed_statuses:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid review status."
+                detail="Invalid review status.",
             )
 
         query = query.filter(
@@ -156,7 +164,11 @@ def list_reviews(
             "reviewer_decision": review.reviewer_decision,
             "reviewer_comments": review.reviewer_comments,
             "reviewed_by": review.reviewed_by,
-            "created_at": review.created_at.isoformat(),
+            "created_at": (
+                review.created_at.isoformat()
+                if review.created_at
+                else None
+            ),
         }
         for review in reviews
     ]
@@ -177,15 +189,43 @@ def decide_review(
     if review is None:
         raise HTTPException(
             status_code=404,
-            detail="Review not found."
+            detail="Review not found.",
         )
 
+    # Prevent an already-decided review from being decided again.
     if review.reviewer_decision != "PENDING":
         raise HTTPException(
             status_code=409,
-            detail="This review has already received a decision."
+            detail="This review has already received a decision.",
         )
 
+    # FIX 6: Find the original review creator using the audit log.
+    creation_entry = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.action == "REVIEW_CREATED",
+            AuditLog.entity_type == "VERIFICATION_REVIEW",
+            AuditLog.entity_id == review.id,
+        )
+        .order_by(AuditLog.id.asc())
+        .first()
+    )
+
+    # Prevent the review creator from approving, rejecting, or
+    # requesting corrections on their own review.
+    # The helper records blocked attempts in the audit log.
+    enforce_maker_checker(
+        db=db,
+        maker_username=(
+            creation_entry.actor if creation_entry else None
+        ),
+        current_user=current_user,
+        entity_type="VERIFICATION_REVIEW",
+        entity_id=review.id,
+        label="review",
+    )
+
+    # Update the review only after maker-checker validation passes.
     review.reviewer_decision = data.decision
     review.reviewer_comments = data.comments
     review.reviewed_at = datetime.now(timezone.utc)
@@ -201,8 +241,12 @@ def decide_review(
         )
     )
 
-    db.commit()
-    db.refresh(review)
+    try:
+        db.commit()
+        db.refresh(review)
+    except Exception:
+        db.rollback()
+        raise
 
     return {
         "review_id": review.id,
