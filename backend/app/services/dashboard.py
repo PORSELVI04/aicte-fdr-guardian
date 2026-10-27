@@ -15,9 +15,18 @@ def get_dashboard_summary(db: Session) -> dict:
     active_count = 0
     expiring_count = 0
     expired_count = 0
+    released_count = 0
+
     total_deposit = Decimal("0.00")
+    released_deposit = Decimal("0.00")
 
     for fdr in fdrs:
+        # Released FDRs must not count as active, expiring or expired.
+        if fdr.validity_status == "RELEASED":
+            released_count += 1
+            released_deposit += fdr.deposit_amount
+            continue
+
         total_deposit += fdr.deposit_amount
 
         if fdr.maturity_date < today:
@@ -33,6 +42,8 @@ def get_dashboard_summary(db: Session) -> dict:
         "active_fdrs": active_count,
         "expiring_within_30_days": expiring_count,
         "expired_fdrs": expired_count,
+        "released_fdrs": released_count,
         "total_deposit_amount": str(total_deposit),
+        "released_deposit_amount": str(released_deposit),
         "as_of_date": today.isoformat(),
     }

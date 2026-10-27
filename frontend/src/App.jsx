@@ -124,6 +124,7 @@ function LoginScreen({ onLogin }) {
 
           <p className="eyebrow">WELCOME BACK</p>
           <h2>Sign in to your account</h2>
+
           <p className="muted">
             Enter your authorized account credentials to continue.
           </p>
@@ -231,9 +232,7 @@ function Dashboard({
 
         <StatCard
           title="Expiring in 30 Days"
-          value={
-            notifications?.expiring_within_30_days_count ?? "—"
-          }
+          value={notifications?.expiring_within_30_days_count ?? "—"}
           subtitle="Require timely attention"
           icon={Clock3}
           color="orange"
@@ -253,9 +252,7 @@ function Dashboard({
           <div className="deposit-card-top">
             <div>
               <span className="deposit-label">TOTAL DEPOSIT VALUE</span>
-              <h2>
-                {formatCurrency(summary?.total_deposit_amount)}
-              </h2>
+              <h2>{formatCurrency(summary?.total_deposit_amount)}</h2>
             </div>
 
             <div className="deposit-icon">
@@ -290,9 +287,7 @@ function Dashboard({
             </div>
           </div>
 
-          <div className="institution-count">
-            {institutions.length}
-          </div>
+          <div className="institution-count">{institutions.length}</div>
 
           <button
             className="secondary-button"
@@ -327,9 +322,7 @@ function Dashboard({
         <div className="section-header">
           <div>
             <h3>Maturity Alerts</h3>
-            <p className="muted">
-              Deposits requiring attention
-            </p>
+            <p className="muted">Deposits requiring attention</p>
           </div>
 
           <button
@@ -343,26 +336,20 @@ function Dashboard({
         {notifications?.expired?.length > 0 ||
         notifications?.expiring_within_7_days?.length > 0 ? (
           <div className="alert-list">
-            {(notifications?.expired || [])
-              .slice(0, 3)
-              .map((item) => (
-                <div className="alert-row" key={`expired-${item.fdr_id}`}>
-                  <span className="alert-symbol red">
-                    <AlertTriangle size={18} />
-                  </span>
+            {(notifications?.expired || []).slice(0, 3).map((item) => (
+              <div className="alert-row" key={`expired-${item.fdr_id}`}>
+                <span className="alert-symbol red">
+                  <AlertTriangle size={18} />
+                </span>
 
-                  <div>
-                    <strong>{item.fdr_number}</strong>
-                    <p>
-                      Expired on {formatDate(item.maturity_date)}
-                    </p>
-                  </div>
-
-                  <span className="status-badge expired">
-                    Expired
-                  </span>
+                <div>
+                  <strong>{item.fdr_number}</strong>
+                  <p>Expired on {formatDate(item.maturity_date)}</p>
                 </div>
-              ))}
+
+                <span className="status-badge expired">Expired</span>
+              </div>
+            ))}
 
             {(notifications?.expiring_within_7_days || [])
               .slice(0, 3)
@@ -374,9 +361,7 @@ function Dashboard({
 
                   <div>
                     <strong>{item.fdr_number}</strong>
-                    <p>
-                      Matures on {formatDate(item.maturity_date)}
-                    </p>
+                    <p>Matures on {formatDate(item.maturity_date)}</p>
                   </div>
 
                   <span className="status-badge upcoming">
@@ -425,7 +410,11 @@ function FdrTable({ fdrs }) {
 
         <tbody>
           {fdrs.map((fdr) => {
+            // Released FDRs must never display as expired.
+            const released = fdr.validity_status === "RELEASED";
+
             const expired =
+              !released &&
               fdr.maturity_date &&
               fdr.maturity_date <
                 new Date().toISOString().slice(0, 10);
@@ -435,16 +424,26 @@ function FdrTable({ fdrs }) {
                 <td>
                   <strong>{fdr.fdr_number}</strong>
                 </td>
+
                 <td>{fdr.bank_name}</td>
                 <td>{formatCurrency(fdr.deposit_amount)}</td>
                 <td>{formatDate(fdr.maturity_date)}</td>
+
                 <td>
                   <span
                     className={`status-badge ${
-                      expired ? "expired" : "active"
+                      released
+                        ? "released"
+                        : expired
+                          ? "expired"
+                          : "active"
                     }`}
                   >
-                    {expired ? "Expired" : fdr.validity_status || "Active"}
+                    {released
+                      ? "Released"
+                      : expired
+                        ? "Expired"
+                        : fdr.validity_status || "Active"}
                   </span>
                 </td>
               </tr>
@@ -485,7 +484,7 @@ function DataPage({ page, fdrs, institutions, notifications, token }) {
       ]
         .join(" ")
         .toLowerCase()
-        .includes(search.toLowerCase())
+        .includes(search.toLowerCase()),
     );
 
     return (
@@ -522,7 +521,7 @@ function DataPage({ page, fdrs, institutions, notifications, token }) {
       ]
         .join(" ")
         .toLowerCase()
-        .includes(search.toLowerCase())
+        .includes(search.toLowerCase()),
     );
 
     return (
@@ -615,9 +614,7 @@ function DataPage({ page, fdrs, institutions, notifications, token }) {
           <div className="alert-group" key={group.title}>
             <h3>
               {group.title}
-              <span className="group-count">
-                {group.items.length}
-              </span>
+              <span className="group-count">{group.items.length}</span>
             </h3>
 
             {group.items.length ? (
@@ -637,14 +634,10 @@ function DataPage({ page, fdrs, institutions, notifications, token }) {
                       {item.bank_name} ·{" "}
                       {formatCurrency(item.deposit_amount)}
                     </p>
-                    <p>
-                      Maturity: {formatDate(item.maturity_date)}
-                    </p>
+                    <p>Maturity: {formatDate(item.maturity_date)}</p>
                   </div>
 
-                  <span
-                    className={`status-badge ${group.style}`}
-                  >
+                  <span className={`status-badge ${group.style}`}>
                     {group.title}
                   </span>
                 </div>
@@ -734,7 +727,7 @@ export default function App() {
 
     if (requests[3].status === "fulfilled") {
       setInstitutions(
-        Array.isArray(requests[3].value) ? requests[3].value : []
+        Array.isArray(requests[3].value) ? requests[3].value : [],
       );
     } else {
       failures++;
@@ -742,7 +735,7 @@ export default function App() {
 
     if (failures) {
       setLoadWarning(
-        `${failures} data request(s) failed. Check that the backend is running and the API routes are available.`
+        `${failures} data request(s) failed. Check that the backend is running and the API routes are available.`,
       );
     }
 
@@ -873,9 +866,7 @@ export default function App() {
               />
             </button>
 
-            <div className="user-avatar">
-              {userRole.slice(0, 1) || "U"}
-            </div>
+            <div className="user-avatar">{userRole.slice(0, 1) || "U"}</div>
 
             <div className="user-details">
               <strong>{userRole || "User"}</strong>

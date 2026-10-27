@@ -18,6 +18,10 @@ def get_fdr_notifications(db: Session) -> dict:
     expiring_within_30_days = []
 
     for fdr in fdrs:
+        # Released FDRs should not generate maturity notifications.
+        if fdr.validity_status == "RELEASED":
+            continue
+
         record = {
             "fdr_id": fdr.id,
             "fdr_number": fdr.fdr_number,

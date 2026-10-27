@@ -18,21 +18,53 @@ router = APIRouter(
     tags=["FDR Actions"],
 )
 
-
-# Request schema for creating an FDR action
 class FDRActionCreate(BaseModel):
-    fdr_id: int = Field(gt=0)
+    fdr_id: int
     action_type: Literal["RENEWAL", "REPLACEMENT", "RELEASE"]
     remarks: str | None = Field(default=None, max_length=1000)
 
 
-# Request schema for approving or rejecting an action
 class FDRActionDecision(BaseModel):
     action_status: Literal["APPROVED", "REJECTED"]
     remarks: str | None = Field(default=None, max_length=1000)
 
 
-# Convert an FDR action object into a JSON-compatible dictionary
+# Outcomes applied to the FDR when an action is approved.
+# (administrative_status, validity_status or None to leave unchanged)
+APPROVED_OUTCOMES = {
+    "RENEWAL": ("RENEWAL_APPROVED", None),
+    "REPLACEMENT": ("REPLACEMENT_APPROVED", None),
+    "RELEASE": ("RELEASED", "RELEASED"),
+}
+
+
+def apply_approved_action(fdr: FDR, action_type: str) -> str:
+    """Update the FDR after approval and describe the change."""
+    if action_type not in APPROVED_OUTCOMES:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported FDR action type.",
+        )
+
+    new_admin_status, new_validity_status = APPROVED_OUTCOMES[action_type]
+
+    old_admin_status = fdr.administrative_status
+    old_validity_status = fdr.validity_status
+
+    fdr.administrative_status = new_admin_status
+
+    if new_validity_status is not None:
+        fdr.validity_status = new_validity_status
+
+    return (
+        f"administrative_status: {old_admin_status} -> "
+        f"{fdr.administrative_status}; "
+        f"validity_status: {old_validity_status} -> "
+        f"{fdr.validity_status}"
+    )
+
+
+# Convert an FDR action object into a JSON-compatible dictionary.
 def action_to_dict(action: FDRAction):
     return {
         "id": action.id,
@@ -55,8 +87,8 @@ def action_to_dict(action: FDRAction):
     }
 
 
-# Create a new FDR action request
-# ADMIN and OFFICER can create requests
+# Create a new FDR action request.
+# ADMIN and OFFICER can create requests.
 @router.post("/", status_code=201)
 def create_fdr_action(
     data: FDRActionCreate,
@@ -71,6 +103,31 @@ def create_fdr_action(
         raise HTTPException(
             status_code=404,
             detail="FDR record not found.",
+        )
+
+    if fdr.validity_status == "RELEASED":
+        raise HTTPException(
+            status_code=409,
+            detail="This FDR has already been released.",
+        )
+
+    duplicate_pending = (
+        db.query(FDRAction)
+        .filter(
+            FDRAction.fdr_id == data.fdr_id,
+            FDRAction.action_type == data.action_type,
+            FDRAction.action_status == "PENDING",
+        )
+        .first()
+    )
+
+    if duplicate_pending is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"A pending {data.action_type} request already exists "
+                "for this FDR."
+            ),
         )
 
     action = FDRAction(
@@ -88,8 +145,8 @@ def create_fdr_action(
     return action_to_dict(action)
 
 
-# List FDR action requests
-# ADMIN, OFFICER and REVIEWER can view requests
+# List FDR action requests.
+# ADMIN, OFFICER and REVIEWER can view requests.
 @router.get("/")
 def list_fdr_actions(
     db: Session = Depends(get_db),
@@ -106,8 +163,8 @@ def list_fdr_actions(
     return [action_to_dict(action) for action in actions]
 
 
-# Approve or reject an FDR action request
-# ADMIN and REVIEWER can make decisions
+# Approve or reject an FDR action request.
+# ADMIN and REVIEWER can make decisions.
 @router.patch("/{action_id}/decision")
 def decide_fdr_action(
     action_id: int,
@@ -125,14 +182,43 @@ def decide_fdr_action(
             detail="FDR action request not found.",
         )
 
-    # Prevent an already-decided request from being decided again
+    # Prevent an already-decided request from being decided again.
     if action.action_status != "PENDING":
         raise HTTPException(
             status_code=409,
             detail="This request has already been decided.",
         )
 
-    # Update the FDR action decision
+    fdr = db.get(FDR, action.fdr_id)
+
+    if fdr is None:
+        raise HTTPException(
+            status_code=404,
+            detail="FDR record not found.",
+        )
+
+    if (
+        data.action_status == "APPROVED"
+        and fdr.validity_status == "RELEASED"
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This FDR has already been released, so this request "
+                "can no longer be approved."
+            ),
+        )
+
+    # Update the FDR only when the request is approved.
+    fdr_change = "No change to FDR status."
+
+    if data.action_status == "APPROVED":
+        fdr_change = apply_approved_action(
+            fdr,
+            action.action_type,
+        )
+
+    # Update the FDR action decision.
     action.action_status = data.action_status
     action.decided_by = current_user.username
     action.decided_at = datetime.utcnow()
@@ -140,7 +226,7 @@ def decide_fdr_action(
     if data.remarks is not None:
         action.remarks = data.remarks
 
-    # Create an audit log entry for the decision
+    # Record the action decision and resulting FDR status changes.
     audit_entry = AuditLog(
         action=f"FDR_ACTION_{data.action_status}",
         entity_type="FDR_ACTION",
@@ -150,13 +236,14 @@ def decide_fdr_action(
             f"FDR ID: {action.fdr_id}; "
             f"Action type: {action.action_type}; "
             f"Status: {data.action_status}; "
+            f"FDR change: {fdr_change}; "
             f"Remarks: {action.remarks or 'None'}"
         ),
     )
 
     db.add(audit_entry)
 
-    # Save the decision and audit entry in one transaction
+    # Save the FDR update, decision and audit entry together.
     try:
         db.commit()
         db.refresh(action)

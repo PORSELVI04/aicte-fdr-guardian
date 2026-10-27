@@ -607,6 +607,12 @@ tbody tr:hover {
   background: #fff4df;
 }
 
+/* Released FDR status */
+.status-badge.released {
+  color: #3b5bdb;
+  background: #edf2ff;
+}
+
 .alert-panel {
   padding-bottom: 12px;
 }
