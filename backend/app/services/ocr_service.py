@@ -1,4 +1,5 @@
 import re
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import pytesseract
@@ -39,8 +40,6 @@ def extract_fdr_fields(text: str) -> dict:
     """
     Extract the FDR number, deposit amount, and dates from OCR text.
     """
-
-    # Normalize OCR text and common spacing issues.
     normalized_text = text.replace("\r", "\n")
     normalized_text = re.sub(r"[ \t]+", " ", normalized_text)
 
@@ -63,10 +62,9 @@ def extract_fdr_fields(text: str) -> dict:
         fdr_number = number_match.group(1).strip(" :-")
 
     # Extract deposit amounts.
-    # Supports examples:
+    # Supports:
     # Deposit Amount: 100000.00
     # Deposit Amount: ₹ 1,00,000.00
-    # Deposit Amount: % 1,00,000.00
     # Amount: Rs. 50,000
     amount_pattern = re.compile(
         r"(?:DEPOSIT\s+AMOUNT|AMOUNT)\s*[:\-]?\s*"
@@ -79,7 +77,6 @@ def extract_fdr_fields(text: str) -> dict:
     deposit_amount = None
 
     if amount_match:
-        # Remove Indian-style grouping commas.
         deposit_amount = amount_match.group(1).replace(",", "")
 
     # Extract dates for subsequent comparison.
@@ -102,12 +99,11 @@ def compare_text(
     expected: str | None,
 ) -> dict:
     """
-    Compare extracted text with a stored value.
+    Fuzzy comparison for names and other non-critical text.
 
     The score is a string similarity score, not a probability
     or a certificate authenticity score.
     """
-
     if not extracted or not expected:
         return {
             "score": None,
@@ -122,4 +118,97 @@ def compare_text(
     return {
         "score": round(score, 2),
         "status": "MATCH" if score >= 90 else "REVIEW_REQUIRED",
+    }
+
+
+def _normalize_identifier(value: str | None) -> str:
+    """
+    Normalize an identifier by removing whitespace and ignoring case.
+    Punctuation, including hyphens, is preserved.
+    """
+    return re.sub(r"\s+", "", str(value or "")).upper()
+
+
+def compare_identifier(
+    extracted: str | None,
+    expected: str | None,
+) -> dict:
+    """
+    Exact comparison for identifiers such as FDR numbers.
+    """
+    if extracted is None or expected is None:
+        return {
+            "score": None,
+            "status": "NOT_AVAILABLE",
+        }
+
+    extracted_value = _normalize_identifier(extracted)
+    expected_value = _normalize_identifier(expected)
+
+    if not extracted_value or not expected_value:
+        return {
+            "score": None,
+            "status": "NOT_AVAILABLE",
+        }
+
+    is_match = extracted_value == expected_value
+
+    return {
+        "score": 100.0 if is_match else 0.0,
+        "status": "MATCH" if is_match else "REVIEW_REQUIRED",
+    }
+
+
+def compare_amount(
+    extracted: str | None,
+    expected: str | None,
+) -> dict:
+    """
+    Exact monetary comparison using Decimal.
+
+    Thousands separators are ignored. Values are compared to two
+    decimal places. Invalid or missing values require review.
+    """
+    if extracted is None or expected is None:
+        return {
+            "score": None,
+            "status": "NOT_AVAILABLE",
+        }
+
+    extracted_text = str(extracted).replace(",", "").strip()
+    expected_text = str(expected).replace(",", "").strip()
+
+    if not extracted_text or not expected_text:
+        return {
+            "score": None,
+            "status": "NOT_AVAILABLE",
+        }
+
+    try:
+        extracted_value = Decimal(extracted_text)
+        expected_value = Decimal(expected_text)
+
+        if (
+            not extracted_value.is_finite()
+            or not expected_value.is_finite()
+        ):
+            return {
+                "score": None,
+                "status": "NOT_AVAILABLE",
+            }
+
+        extracted_value = extracted_value.quantize(Decimal("0.01"))
+        expected_value = expected_value.quantize(Decimal("0.01"))
+
+    except (InvalidOperation, ValueError):
+        return {
+            "score": None,
+            "status": "NOT_AVAILABLE",
+        }
+
+    is_match = extracted_value == expected_value
+
+    return {
+        "score": 100.0 if is_match else 0.0,
+        "status": "MATCH" if is_match else "REVIEW_REQUIRED",
     }
