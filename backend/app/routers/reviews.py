@@ -12,6 +12,7 @@ from app.models.document import FDRDocument
 from app.models.fdr import FDR
 from app.models.user import User
 from app.models.verification import VerificationReview
+from app.services.verification_service import run_ocr_verification
 
 router = APIRouter(
     prefix="/api/reviews",
@@ -22,15 +23,6 @@ router = APIRouter(
 class ReviewCreate(BaseModel):
     fdr_id: int = Field(gt=0)
     document_id: int = Field(gt=0)
-
-    verification_status: str = Field(
-        pattern="^(REVIEW_REQUIRED|OCR_MATCHED)$"
-    )
-
-    discrepancy_details: list[str] = Field(
-        default_factory=list
-    )
-
 
 class ReviewDecision(BaseModel):
     decision: str = Field(
@@ -55,10 +47,7 @@ def create_review(
     fdr = db.get(FDR, data.fdr_id)
 
     if fdr is None:
-        raise HTTPException(
-            status_code=404,
-            detail="FDR not found."
-        )
+        raise HTTPException(status_code=404, detail="FDR not found.")
 
     document = (
         db.query(FDRDocument)
@@ -72,16 +61,26 @@ def create_review(
     if document is None:
         raise HTTPException(
             status_code=404,
-            detail="Document does not belong to this FDR."
+            detail="Document does not belong to this FDR.",
         )
+
+    # Calculate the verification result on the server.
+    if document.content_type in {"image/jpeg", "image/png"}:
+        result = run_ocr_verification(fdr, document)
+        verification_status = result["verification_status"]
+        discrepancy_details = result["issues"]
+    else:
+        verification_status = "REVIEW_REQUIRED"
+        discrepancy_details = [
+            "Automatic OCR is unavailable for this document type. "
+            "Manual verification is required."
+        ]
 
     review = VerificationReview(
         fdr_id=data.fdr_id,
         document_id=data.document_id,
-        verification_status=data.verification_status,
-        discrepancy_details=json.dumps(
-            data.discrepancy_details
-        ),
+        verification_status=verification_status,
+        discrepancy_details=json.dumps(discrepancy_details),
     )
 
     db.add(review)
@@ -93,7 +92,10 @@ def create_review(
             entity_type="VERIFICATION_REVIEW",
             entity_id=review.id,
             actor=current_user.username,
-            details=f"Review created for FDR {data.fdr_id}.",
+            details=(
+                f"Review created for FDR {data.fdr_id} "
+                f"(server result: {verification_status})."
+            ),
         )
     )
 
