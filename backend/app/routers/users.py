@@ -51,6 +51,16 @@ def create_user(
     )
 
     db.add(user)
+    db.flush()
+
+    add_audit_log(
+        db,
+        action="USER_CREATED",
+        entity_type="USER",
+        entity_id=user.id,
+        actor=current_user.username,
+        details=f"User {user.username} created with role {user.role}.",
+    )
     db.commit()
     db.refresh(user)
 

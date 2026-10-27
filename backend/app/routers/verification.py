@@ -55,3 +55,18 @@ def verify_fdr_document(
     )
 
     return run_ocr_verification(fdr, document)
+    add_audit_log(
+        db,
+        action="OCR_VERIFICATION_RUN",
+        entity_type="FDR_DOCUMENT",
+        entity_id=document.id,
+        actor=current_user.username,
+        details=(
+            f"FDR {fdr_id}; result "
+            f"{result['verification_status']}; "
+            f"issues: {len(result['issues'])}."
+        ),
+    )
+    db.commit()
+
+    return result

@@ -33,6 +33,16 @@ def create_institution(
     institution = Institution(**data.model_dump())
 
     db.add(institution)
+    db.flush()
+
+    add_audit_log(
+        db,
+        action="INSTITUTION_CREATED",
+        entity_type="INSTITUTION",
+        entity_id=institution.id,
+        actor=current_user.username,
+        details=f"Institution code {institution.institution_code} created.",
+    )
     db.commit()
     db.refresh(institution)
 

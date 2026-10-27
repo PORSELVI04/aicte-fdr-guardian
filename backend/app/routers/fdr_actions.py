@@ -145,6 +145,19 @@ def create_fdr_action(
     )
 
     db.add(action)
+    db.flush()
+
+    add_audit_log(
+        db,
+        action="FDR_ACTION_CREATED",
+        entity_type="FDR_ACTION",
+        entity_id=action.id,
+        actor=current_user.username,
+        details=(
+            f"FDR ID: {action.fdr_id}; "
+            f"Action type: {action.action_type}; Status: PENDING."
+        ),
+    )
     db.commit()
     db.refresh(action)
 

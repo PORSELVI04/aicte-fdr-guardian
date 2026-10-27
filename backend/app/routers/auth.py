@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.user import User
 from app.schemas.auth import UserCreate, UserResponse, TokenResponse
+from app.services.audit_service import add_audit_log
 from app.services.auth_service import (
     hash_password,
     verify_password,
@@ -49,6 +50,16 @@ def register_user(
     )
 
     db.add(user)
+    db.flush()
+
+    add_audit_log(
+        db=db,
+        action="USER_REGISTERED",
+        entity_type="USER",
+        entity_id=user.id,
+        actor=user.username,
+        details="Public registration; role: VIEWER.",
+    )
     db.commit()
     db.refresh(user)
 
@@ -68,6 +79,16 @@ def login_user(
         user is None
         or not verify_password(form_data.password, user.password_hash)
     ):
+        add_audit_log(
+            db=db,
+            action="LOGIN_FAILED",
+            entity_type="USER",
+            entity_id=user.id if user else 0,
+            actor=user.username if user else "UNKNOWN_USER",
+            details="Invalid username or password.",
+        )
+        db.commit()
+
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password.",
@@ -75,10 +96,30 @@ def login_user(
         )
 
     if not user.is_active:
+        add_audit_log(
+            db=db,
+            action="LOGIN_FAILED",
+            entity_type="USER",
+            entity_id=user.id,
+            actor=user.username,
+            details="Login rejected: account is inactive.",
+        )
+        db.commit()
+
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This account is inactive.",
         )
+
+    add_audit_log(
+        db=db,
+        action="LOGIN_SUCCESS",
+        entity_type="USER",
+        entity_id=user.id,
+        actor=user.username,
+        details=f"Successful login; role: {user.role}.",
+    )
+    db.commit()
 
     token = create_access_token(
         user_id=user.id,

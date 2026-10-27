@@ -16,6 +16,7 @@ from app.models.document import FDRDocument
 from app.models.fdr import FDR
 from app.models.user import User
 from app.services.document_integrity import check_document_integrity
+from app.services.audit_service import add_audit_log
 from app.services.document_service import (
     UPLOAD_DIR,
     save_document,
@@ -60,6 +61,20 @@ async def upload_fdr_document(
 
     try:
         db.add(document)
+        db.flush()
+
+        add_audit_log(
+            db=db,
+            action="DOCUMENT_UPLOADED",
+            entity_type="FDR_DOCUMENT",
+            entity_id=document.id,
+            actor=current_user.username,
+            details=(
+                f"Filename: {document.original_filename}; "
+                f"FDR ID: {fdr_id}; "
+                f"SHA-256: {saved['sha256']}"
+            ),
+        )
         db.commit()
         db.refresh(document)
 
@@ -149,6 +164,22 @@ def download_fdr_document(
         document=document,
         current_user=current_user,
     )
+
+    # Log only after the integrity check succeeds.
+    add_audit_log(
+        db=db,
+        action="DOCUMENT_DOWNLOADED",
+        entity_type="FDR_DOCUMENT",
+        entity_id=document.id,
+        actor=current_user.username,
+        details=(
+            f"Filename: {document.original_filename}; "
+            f"FDR ID: {fdr_id}; "
+            f"Integrity: {integrity_status}"
+        ),
+    )
+    db.commit()
+
 
     file_path = UPLOAD_DIR / document.stored_filename
 

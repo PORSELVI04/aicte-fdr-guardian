@@ -53,6 +53,20 @@ def create_fdr(
     fdr = FDR(**data.model_dump())
 
     db.add(fdr)
+    db.flush()
+
+    add_audit_log(
+        db,
+        action="FDR_CREATED",
+        entity_type="FDR",
+        entity_id=fdr.id,
+        actor=current_user.username,
+        details=(
+            f"FDR {fdr.fdr_number} created for institution "
+            f"{fdr.institution_id}; amount {fdr.deposit_amount}; "
+            f"bank {fdr.bank_name}."
+        ),
+    )
     db.commit()
     db.refresh(fdr)
 
